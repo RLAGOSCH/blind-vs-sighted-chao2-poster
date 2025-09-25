@@ -1,7 +1,7 @@
 # blind-vs-sighted-chao2-poster
 # Semantic Richness Comparison in Blind vs Sighted Participants
 
-This repository contains the analysis and poster presented at [NAME OF CONFERENCE].
+This repository contains the analysis and poster presented at XXI Reunión Anual Sociedad Chilena de Neurociencia.
 
 ## 🧠 Objective
 
