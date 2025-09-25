@@ -1,226 +1,189 @@
-
-
+# Limpiar el entorno
 rm(list = ls())
 
-# cargar librerias
-library(readxl)
-library(dplyr)
-library(tidyr)
-library(stringr)
-library(ggplot2)
-library(forcats)
+# ─────────────────────────────────────────────────────
+# Cargar librerías necesarias
+# ─────────────────────────────────────────────────────
+library(readxl)      # Leer archivos Excel
+library(dplyr)       # Manipulación de datos
+library(tidyr)       # Transformación wide <-> long
+library(stringr)     # Manipulación de strings
+library(ggplot2)     # Gráficos
+library(forcats)     # Ordenar factores en ggplot
 
+# ─────────────────────────────────────────────────────
+# Cargar funciones personalizadas para el análisis
+# ─────────────────────────────────────────────────────
+source("funciones/fGetQ_V2.R")      # Calcula frecuencias Qk
+source("funciones/fShat_bc.R")      # Estima Schao2 corregido por sesgo
+source("funciones/fCoverage_V2.R")  # Estima sample coverage
 
-# funciones in house para el calculo de los estimadores
-source("funciones/fGetQ_V2.R")
-source("funciones/fShat_bc.R")
-source("funciones/fCoverage_V2.R")
-
-# Parámetros
+# ─────────────────────────────────────────────────────
+# Parámetros generales para IC
+# ─────────────────────────────────────────────────────
 alpha <- 0.05
-z <- qnorm(1 - alpha/2)
+z <- qnorm(1 - alpha / 2)  # Valor crítico z para IC del 95%
 
-# cargar normas Blind
-dfData <- read_xlsx(path = "data/Datos Italianos_sinRep.xlsx",sheet = "production-data", range = "A1:D36150")
+# ─────────────────────────────────────────────────────
+# Leer datos desde el Excel original
+# ─────────────────────────────────────────────────────
+df_raw <- read_xlsx("data/Datos Italianos.xlsx",
+                    sheet = "production-data",
+                    range = "A1:D36150")
 
-# separar por grupo
-dfS <- dfData[dfData$Group == 's',]
-dfB <- dfData[dfData$Group == "b",]
+# ─────────────────────────────────────────────────────
+# Separar los datos en dos grupos: videntes y ciegos
+# ─────────────────────────────────────────────────────
+df_sighted <- df_raw %>% filter(Group == "s")
+df_blind   <- df_raw %>% filter(Group == "b")
 
-# calcular número de sujetos
-nT_S <- length(unique(dfS$Subject))
-nT_B <- length(unique(dfB$Subject))               
+# Número total de participantes por grupo
+n_sighted <- n_distinct(df_sighted$Subject)
+n_blind   <- n_distinct(df_blind$Subject)
 
-# calcular probabilidades de dectabilidad por concepto en cada grupo
-lstVf_S <- tapply(dfS$FeatureEn, dfS$ConceptEn, FUN = table)
-lstVf_B <- tapply(dfB$FeatureEn, dfB$ConceptEn, FUN = table)
+# ─────────────────────────────────────────────────────
+# Contar cuántas veces aparece cada característica por concepto
+# ─────────────────────────────────────────────────────
+lst_feat_sighted <- tapply(df_sighted$FeatureEn, df_sighted$ConceptEn, table)
+lst_feat_blind   <- tapply(df_blind$FeatureEn, df_blind$ConceptEn, table)
 
-# calcular el vector de Qk por concpeto para cada grupo
-lstQk_S <- lapply(lstVf_S, fGetQ_V2, nT = nT_S)
-lstQk_B <- lapply(lstVf_B, fGetQ_V2, nT = nT_B)
+# ─────────────────────────────────────────────────────
+# Obtener los vectores Qk (frecuencia de aparición por concepto)
+# ─────────────────────────────────────────────────────
+lst_qk_sighted <- lapply(lst_feat_sighted, fGetQ_V2, nT = n_sighted)
+lst_qk_blind   <- lapply(lst_feat_blind,   fGetQ_V2, nT = n_blind)
 
-# optener el estiamodr de Schao2BC por grupo
-lstSchao2BC_S <- lapply(lstQk_S, fShat_bc)
-lstSchao2BC_B <- lapply(lstQk_B, fShat_bc)
+# ─────────────────────────────────────────────────────
+# Estimar riqueza semántica Schao2BC y coverage
+# ─────────────────────────────────────────────────────
+lst_schao2_sighted <- lapply(lst_qk_sighted, fShat_bc)
+lst_schao2_blind   <- lapply(lst_qk_blind,   fShat_bc)
 
-# optener el coverage por grupo y concpetos
+lst_cov_sighted <- lapply(lst_qk_sighted, fCoverage_V2, nT = n_sighted)
+lst_cov_blind   <- lapply(lst_qk_blind,   fCoverage_V2, nT = n_blind)
 
-lstCV_S <- lapply(lstQk_S, fCoverage_V2, nT = nT_S)
-lstCV_B <- lapply(lstQk_B, fCoverage_V2, nT = nT_B)
+# ─────────────────────────────────────────────────────
+# Convertir listas de coverage a data frames (2 columnas)
+# ─────────────────────────────────────────────────────
+df_cov_sighted <- data.frame(
+  Concepto = names(lst_cov_sighted),
+  CV_videntes = unlist(lst_cov_sighted)
+)
 
-# orenar dataframe de coverage (de chao2)
+df_cov_blind <- data.frame(
+  Concepto = names(lst_cov_blind),
+  CV_ciegos = unlist(lst_cov_blind)
+)
 
-dfCV_S <-  do.call(rbind, lstCV_S)
-dfCV_B <-  do.call(rbind, lstCV_B)
+df_coverage <- left_join(df_cov_blind, df_cov_sighted, by = "Concepto") %>%
+  mutate(Diff_CV = abs(CV_videntes - CV_ciegos))
 
-dfCV_S <- as.data.frame(dfCV_S)
-dfCV_B <- as.data.frame(dfCV_B)
+rm(lst_cov_sighted, lst_cov_blind)  # limpieza
 
-dfCV_S[] <- lapply(dfCV_S, unlist)
-dfCV_B[] <- lapply(dfCV_B, unlist)
+# ─────────────────────────────────────────────────────
+# Unir estimadores en un solo data frame largo
+# ─────────────────────────────────────────────────────
+df_schao2_sighted <- bind_rows(lst_schao2_sighted, .id = "Concepto") %>%
+  mutate(Grupo = "videntes")
 
-dfCV_S$Concepto <- row.names(dfCV_S)
-dfCV_B$Concepto <- row.names(dfCV_B)
+df_schao2_blind <- bind_rows(lst_schao2_blind, .id = "Concepto") %>%
+  mutate(Grupo = "ciegos")
 
-rownames(dfCV_S) <- NULL
-rownames(dfCV_B) <- NULL
+df_estimadores <- bind_rows(df_schao2_sighted, df_schao2_blind) %>%
+  rename(Schao2BC = Shat_BC,
+         SE_Schao2BC = varShat_BC) %>%
+  mutate(SE_Schao2BC = sqrt(SE_Schao2BC))
 
-names(dfCV_S)[1] <- "CV_videntes"
-names(dfCV_B)[1] <- "CV_Ciegos"
+rm(lst_schao2_sighted, lst_schao2_blind,
+   df_schao2_sighted, df_schao2_blind)
 
-dfCV <- merge(x = dfCV_B, dfCV_S, by = "Concepto")
-
-dfCV$Diff_CV <-abs( dfCV$CV_videntes - dfCV$CV_Ciegos)
-
-# order data frame de estiamdores
-dfSchao2BC_S <- do.call(rbind, lstSchao2BC_S)
-dfSchao2BC_B <- do.call(rbind, lstSchao2BC_B)
-
-dfSchao2BC_S <- as.data.frame(dfSchao2BC_S)
-dfSchao2BC_B <- as.data.frame(dfSchao2BC_B)
-
-dfSchao2BC_S[] <- lapply(dfSchao2BC_S, unlist)
-dfSchao2BC_B[] <- lapply(dfSchao2BC_B, unlist)
-
-dfSchao2BC_S$Concepto <- rownames(dfSchao2BC_S)
-dfSchao2BC_B$Concepto <- rownames(dfSchao2BC_B)
-
-rownames(dfSchao2BC_S) <- NULL
-rownames(dfSchao2BC_B) <- NULL
-
-# juntar en solo data frame
-
-dfSchao2BC_S$Grupo <- "videntes"
-dfSchao2BC_B$Grupo <- "ciegos"
-
-dfDataIC <- rbind(dfSchao2BC_S, dfSchao2BC_B)
-
-# homogenizar nomobre
-
-names(dfDataIC)[1] <- "Schao2BC"
-
-# caclular sd
-
-dfDataIC$SE_Schao2BC <- sqrt(dfDataIC$varShat_BC)
-
-# trafromar data en formato wide
-
-dfwideIC <- dfDataIC %>%
+# ─────────────────────────────────────────────────────
+# Convertir a formato wide para comparar entre grupos
+# ─────────────────────────────────────────────────────
+df_wide <- df_estimadores %>%
   mutate(Grupo = tolower(Grupo)) %>%
-  filter(Grupo %in% c("ciegos", "videntes")) %>%
   select(Concepto, Grupo, Schao2BC, SE_Schao2BC) %>%
-  pivot_wider(
-    names_from = Grupo,
-    values_from = c(Schao2BC, SE_Schao2BC),
-    names_sep = "_"
-  )
+  pivot_wider(names_from = Grupo, values_from = c(Schao2BC, SE_Schao2BC))
 
-# 2) Diferencia (videntes - ciegos) + IC asintótico y p-value (aprox normal)
-dfDiff <- dfwideIC %>%
+# ─────────────────────────────────────────────────────
+# Comparación entre grupos: diferencia, IC y p-valor
+# ─────────────────────────────────────────────────────
+df_diff <- df_wide %>%
   transmute(
     Concepto,
-    Schao2BC_videntes, SE_videntes = SE_Schao2BC_videntes,
-    Schao2BC_ciegos,   SE_ciegos   = SE_Schao2BC_ciegos,
-    diff = Schao2BC_videntes - Schao2BC_ciegos,
-    SE_diff = sqrt(SE_videntes^2 + SE_ciegos^2),   # independencia entre grupos
-    z_stat = diff / SE_diff,
-    p_value = 2 * pnorm(-abs(z_stat)),
-    CI_low  = diff - z * SE_diff,
-    CI_high = diff + z * SE_diff
+    Schao2BC_videntes,
+    Schao2BC_ciegos,
+    SE_videntes = SE_Schao2BC_videntes,
+    SE_ciegos   = SE_Schao2BC_ciegos,
+    diff        = Schao2BC_videntes - Schao2BC_ciegos,
+    SE_diff     = sqrt(SE_videntes^2 + SE_ciegos^2),
+    z_stat      = diff / SE_diff,
+    p_value     = 2 * pnorm(-abs(z_stat)),
+    CI_low      = diff - z * SE_diff,
+    CI_high     = diff + z * SE_diff
   ) %>%
   arrange(p_value)
 
-
-# 3) Ajuste por comparaciones múltiples (elige uno)
-#    - Holm (conservador sin suponer independencia; tu favorito cuando hay pocas comparaciones clave)
-#    - BH (FDR) si te interesa controlar tasa de falsos descubrimientos
-dfDiff <- dfDiff %>%
+# ─────────────────────────────────────────────────────
+# Corrección por múltiples comparaciones
+# ─────────────────────────────────────────────────────
+df_diff <- df_diff %>%
   mutate(
     p_holm = p.adjust(p_value, method = "holm"),
     p_bh   = p.adjust(p_value, method = "BH"),
-    p_FDR   = p.adjust(p_value, method = "fdr"),
+    p_FDR  = p.adjust(p_value, method = "fdr"),
     sig_95 = ifelse(CI_low > 0 | CI_high < 0, "No traslape con 0", "Incluye 0")
   )
 
-
-
-# fores plot 
-
-# 4) Forest plot (diferencia vid - cie): a la derecha de 0 favorece "videntes"
-dfPlotIC <- dfDiff %>%
+# ─────────────────────────────────────────────────────
+# Gráfico tipo forest plot para diferencias significativas
+# ─────────────────────────────────────────────────────
+df_plot <- df_diff %>%
+  left_join(df_cov_sighted, by = "Concepto") %>%
+  left_join(df_cov_blind,   by = "Concepto") %>%
+  mutate(CV_07 = CV_videntes >= 0.7 & CV_ciegos >= 0.7) %>%
   mutate(Concepto = fct_reorder(Concepto, diff))
 
-
-# agregarle al data frame plot los CV para inclirlo en el grafico
-dfPlotIC <- merge(x = dfPlotIC, dfCV_S, by = "Concepto")
-dfPlotIC <- merge(x = dfPlotIC, dfCV_B, by = "Concepto")
-
-# agregar un boleano que muestre que ambos coveragres son mayores a 0.7
-dfPlotIC$CV_07 <- dfPlotIC$CV_Ciegos >=  0.7 & dfPlotIC$CV_videntes >= 0.7
-
-
-# fores plot 
-ggplot(dfPlotIC, aes(x = diff, y = Concepto, color = CV_07)) +
+ggplot(df_plot, aes(x = diff, y = Concepto, color = CV_07)) +
   geom_point(size = 2) +
-  geom_errorbarh(
-    aes(xmin = CI_low, xmax = CI_high),
-    height = 0, size = 0.7
-  ) +
+  geom_errorbarh(aes(xmin = CI_low, xmax = CI_high), height = 0, linewidth = 0.7) +
   geom_vline(xintercept = 0, linetype = "dashed") +
   scale_color_manual(
-    values = c(`FALSE` = "#000000",  # black
-               `TRUE`  = "#E69F00"), # naranja
+    values = c(`FALSE` = "#000000", `TRUE` = "#E69F00"),
     name   = "Sample coverage ≥ 0.7",
     labels = c("No", "Yes")
   ) +
   labs(
-    x = "Difference in richness Chao2BC (sighted – blind)",
-    y = "Concept",
-    title = "Comparison by concept with asymptotic CI (Chao2BC)"
+    x = "Diferencia en Schao2BC (videntes – ciegos)",
+    y = "Concepto",
+    title = "Comparación entre grupos (IC asintótico)"
   ) +
   theme_minimal() +
-  theme(
-    legend.position = "bottom"
-  )
+  theme(legend.position = "bottom")
 
+# ─────────────────────────────────────────────────────
+# Gráfico rank–frecuencia para el concepto 'dog'
+# ─────────────────────────────────────────────────────
+df_dog <- df_raw %>%
+  filter(ConceptEn == "dog") %>%
+  count(FeatureEn, name = "Freq") %>%
+  arrange(desc(Freq)) %>%
+  mutate(Rank = row_number())
 
-# graficar las probabilidades de dectabilidad para un concpeto de ejemplo
-
-# escojamos al concetpo mas bkn de todo DOG
-
-
-dfDog <- dfData[dfData$ConceptEn == "dog",]
-
-dfDog <- dfDog[,c("Subject",  "ConceptEn", "FeatureEn")]
-
-
-# frecuencia
-
-
-dfFeatures_Dog <- as.data.frame(table(dfDog$FeatureEn))
-
-
-dfFeatures_Dog <- dfFeatures_Dog[order(-dfFeatures_Dog$Freq), ]
-
-row.names(dfFeatures_Dog) <- NULL
-
-dfFeatures_Dog$Rank <- 1:dim(dfFeatures_Dog)[1]
-
-
-ggplot(dfFeatures_Dog, aes(x = Rank, y = Freq)) +
+ggplot(df_dog, aes(x = Rank, y = Freq)) +
   geom_line(color = "#E69F00", size = 1) +
   geom_area(fill = "#E69F00", alpha = 0.3) +
   labs(
-    title = "Rank–frequency distribution (concept: dog)",
-    x = "Rank",
-    y = "Frequency"
+    title = "Distribución rank–frecuencia (concepto: dog)",
+    x = "Rango",
+    y = "Frecuencia"
   ) +
-  theme_minimal()+
+  theme_minimal() +
   theme(
-    panel.grid = element_blank(),            # sin grilla
-    axis.line = element_line(color = "black"), # ejes visibles
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black"),
     axis.ticks = element_line(color = "black")
   ) +
-  scale_y_continuous(expand = c(0, 0)) +      # curva toca eje X
-  scale_x_continuous(expand = c(0, 0))        # curva toca eje Y
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_continuous(expand = c(0, 0))
 
